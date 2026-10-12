@@ -1,0 +1,11 @@
+{
+  "name": "yuketang-autonext",
+  "version": "0.1.0",
+  "private": true,
+  "description": "雨课堂视频连续播放助手",
+  "scripts": {
+    "build": "node scripts/build.cjs",
+    "test": "node tests/core.test.cjs"
+  },
+  "license": "MIT"
+}

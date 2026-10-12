@@ -1,0 +1,10 @@
+node_modules/
+.idea/
+.vscode/
+.env
+.env.*
+*.log
+diagnostics/
+screenshots/
+storage-state*.json
+cookies*.json
