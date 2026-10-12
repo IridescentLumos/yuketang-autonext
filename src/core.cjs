@@ -1,5 +1,12 @@
 'use strict';
 
+function courseIdFromPath(pathname) {
+    const legacy = pathname.match(/^\/pro\/lms\/[^/]+\/([^/]+)(?:\/|$)/);
+    const graph = pathname.match(/^\/ai-workspace\/lms-graph\/([^/]+)(?:\/|$)/);
+    const id = legacy?.[1] || graph?.[1];
+    return id ? `course:${id}` : null;
+}
+
 function chooseNextVideo(lessons, currentId) {
     const positions = lessons.flatMap((lesson, index) => lesson.id === currentId ? [index] : []);
     if (positions.length !== 1) throw new Error('当前小节必须在目录中唯一存在。');
@@ -38,4 +45,4 @@ function createRunGate() {
     };
 }
 
-module.exports = { chooseNextVideo, hasReallyEnded, createRunGate };
+module.exports = { courseIdFromPath, chooseNextVideo, hasReallyEnded, createRunGate };
