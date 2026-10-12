@@ -1,6 +1,6 @@
 {
   "name": "yuketang-autonext",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "description": "雨课堂视频连续播放助手",
   "scripts": {

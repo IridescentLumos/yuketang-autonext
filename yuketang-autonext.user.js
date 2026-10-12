@@ -1,9 +1,9 @@
 // ==UserScript==
 // @name         雨课堂：视频连续播放助手
 // @namespace    yuketang-autonext
-// @version      0.1.0
+// @version      0.1.1
 // @description  正常播放视频，结束后选择下一条视频，跳过作业与考试
-// @match        https://seugs.yuketang.cn/pro/lms/*
+// @match        https://seugs.yuketang.cn/*
 // @run-at       document-idle
 // @grant        none
 // @noframes
@@ -11,6 +11,13 @@
 
 (() => {
 'use strict';
+function courseIdFromPath(pathname) {
+    const legacy = pathname.match(/^\/pro\/lms\/[^/]+\/([^/]+)(?:\/|$)/);
+    const graph = pathname.match(/^\/ai-workspace\/lms-graph\/([^/]+)(?:\/|$)/);
+    const id = legacy?.[1] || graph?.[1];
+    return id ? `course:${id}` : null;
+}
+
 function chooseNextVideo(lessons, currentId) {
     const positions = lessons.flatMap((lesson, index) => lesson.id === currentId ? [index] : []);
     if (positions.length !== 1) throw new Error('当前小节必须在目录中唯一存在。');
@@ -50,10 +57,11 @@ function createRunGate() {
 }
 
 
+function initializeController() {
 const PANEL_ID = 'yuketang-autonext-panel';
 if (document.getElementById(PANEL_ID)) return;
 const normalize = value => String(value || '').replace(/\s+/g, ' ').trim();
-const courseKey = () => location.pathname.match(/^\/pro\/lms\/[^/]+\/[^/]+/)?.[0] || null;
+const courseKey = () => courseIdFromPath(location.pathname);
 const initialCourse = courseKey();
 if (!initialCourse) return;
 const storageKey = `yuketang-autonext:pending:${initialCourse}`;
@@ -133,6 +141,7 @@ shadow.innerHTML = `
 :host { font:14px/1.5 system-ui,"Microsoft YaHei",sans-serif;color:#17283f; }
 section { width:310px;max-width:calc(100vw - 40px);background:#fff;border:1px solid #cbd7e8;border-radius:12px;padding:14px;box-shadow:0 6px 28px #20345630; }
 header { display:flex;justify-content:space-between;align-items:center;font-weight:650; }
+textarea { width:100%;box-sizing:border-box;min-height:140px;font:12px/1.5 monospace;resize:vertical;border:1px solid #cbd7e8;border-radius:6px;padding:7px; }
 button,select { font:inherit;box-sizing:border-box; }
 select { width:100%;border:1px solid #cbd7e8;background:#fff;border-radius:6px;padding:7px;margin:5px 0; }
 button { border:0;border-radius:6px;padding:7px 10px;background:#386ce4;color:#fff;cursor:pointer; }
@@ -148,12 +157,14 @@ p { margin:8px 0; }
 <section>
   <header>雨课堂 · 连续播放 <button id="fold" class="secondary" type="button">收起</button></header>
   <div id="body">
-    <p class="hint">正常速度 · 跳过作业和考试 · 保持课程页前台</p>
+    <p class="hint">v0.1.1 已加载 · 正常速度 · 保持课程页前台</p>
     <label for="lesson">当前正在看的视频</label>
     <select id="lesson"></select>
     <nav><button id="start" type="button">开始 / 继续</button><button id="pause" class="secondary" type="button">暂停</button><button id="stop" class="secondary" type="button">停止</button></nav>
     <div id="status" role="status">等待目录加载…</div>
     <p class="hint" id="count"></p>
+    <button id="diagnose" type="button" class="secondary">自检 / 复制诊断</button>
+    <textarea id="diagnostic" readonly hidden aria-label="诊断结果"></textarea>
     <div id="log" aria-label="运行记录"></div>
   </div>
 </section>`;
@@ -269,7 +280,9 @@ async function advance(video, token) {
         removeLoadWatch = () => video.removeEventListener('loadedmetadata', markReload);
         writePending(next.title, directorySignature);
         setStatus(`正在打开：${next.title}`, true);
-        next.row.click();
+        const clickTarget = next.row.querySelector('.leaf-item-title');
+        if (!clickTarget) throw new Error('下一节的视频标题已改变，请刷新目录后继续。');
+        clickTarget.click();
         const deadline = Date.now() + 35000;
         let replacement = null;
         while (Date.now() < deadline) {
@@ -365,6 +378,38 @@ shadow.querySelector('#fold').addEventListener('click', event => {
     body.hidden = !body.hidden;
     event.target.textContent = body.hidden ? '展开' : '收起';
 });
+shadow.querySelector('#diagnose').addEventListener('click', async () => {
+    const playerList = [...document.querySelectorAll('video')];
+    let directory = null;
+    let directoryError = null;
+    try { directory = readDirectory(); } catch (error) { directoryError = error.message; }
+    const report = {
+        version: '0.1.1', path: location.pathname,
+        running, currentId, selected: picker.value, status: status.textContent,
+        directoryRoots: document.querySelectorAll('.nav-list').length,
+        iframeCount: document.querySelectorAll('iframe').length,
+        directoryError, lessonCount: directory?.lessons.length ?? 0,
+        videoCount: directory?.lessons.filter(item => item.type === '视频').length ?? 0,
+        detectedCurrent: directory ? inferCurrent(directory) : null,
+        visibility: document.visibilityState, focused: document.hasFocus(),
+        players: playerList.map(video => ({
+            class: video.className, visible: video.getBoundingClientRect().width > 0 && video.getBoundingClientRect().height > 0,
+            readyState: video.readyState, paused: video.paused, ended: video.ended, loop: video.loop,
+            duration: Number.isFinite(video.duration) ? video.duration : null,
+            currentTime: video.currentTime, speed: video.playbackRate,
+        })), logs,
+    };
+    const diagnostic = shadow.querySelector('#diagnostic');
+    diagnostic.hidden = false;
+    diagnostic.value = JSON.stringify(report, null, 2);
+    try {
+        await navigator.clipboard.writeText(diagnostic.value);
+        setStatus('诊断已复制。可以粘贴到聊天；诊断不包含 Cookie 或媒体地址。');
+    } catch {
+        diagnostic.focus(); diagnostic.select();
+        setStatus('诊断已选中，请按 Ctrl+C 复制到聊天。');
+    }
+});
 document.addEventListener('click', event => {
     if (!event.isTrusted || !running || !(event.target instanceof Element)) return;
     const row = event.target.closest('.leaf-item');
@@ -381,6 +426,7 @@ async function poll() {
     if (courseKey() !== initialCourse) {
         halt('已进入其他课程或页面。请刷新页面后再开始。');
         clearInterval(pollTimer);
+        host.remove();
         return;
     }
     try {
@@ -419,5 +465,40 @@ async function poll() {
 updateButtons();
 const pollTimer = setInterval(() => { void poll(); }, 1000);
 void poll();
+
+}
+
+const loaderId = 'yuketang-autonext-loading';
+function showLoading(message) {
+    if (!document.body) return;
+    let badge = document.getElementById(loaderId);
+    if (!badge) {
+        badge = document.createElement('div');
+        badge.id = loaderId;
+        badge.style.cssText = 'position:fixed;right:18px;bottom:18px;z-index:2147483646;background:#fff;color:#17283f;border:1px solid #cbd7e8;border-radius:8px;padding:12px;max-width:320px;font:14px/1.5 system-ui;box-shadow:0 4px 20px #20345630;';
+        document.body.appendChild(badge);
+    }
+    badge.textContent = message;
+}
+let retryAfter = 0;
+function bootWhenReady() {
+    if (!document.body || document.getElementById('yuketang-autonext-panel')) return;
+    if (!courseIdFromPath(location.pathname)) {
+        showLoading('连续播放助手 v0.1.1 已加载。请进入课程视频页。');
+        return;
+    }
+    if (Date.now() < retryAfter) return;
+    try {
+        initializeController();
+        document.getElementById(loaderId)?.remove();
+    } catch (error) {
+        document.getElementById('yuketang-autonext-panel')?.remove();
+        retryAfter = Date.now() + 10000;
+        showLoading('连续播放助手 v0.1.1 加载失败：' + String(error.message));
+        console.error('[yuketang-autonext] startup', error);
+    }
+}
+setInterval(bootWhenReady, 1000);
+bootWhenReady();
 
 })();
